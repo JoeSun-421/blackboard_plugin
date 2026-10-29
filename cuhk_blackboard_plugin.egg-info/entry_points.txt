@@ -1,0 +1,3 @@
+[console_scripts]
+cuhk-bb-mcp = cuhk_blackboard.mcp_server:main
+cuhk-blackboard = cuhk_blackboard.cli:main

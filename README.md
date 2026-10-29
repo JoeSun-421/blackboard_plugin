@@ -1,0 +1,196 @@
+# CUHK Blackboard Scraper & AI Agent Plugin
+
+[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://python.org)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io)
+[![Institution](https://img.shields.io/badge/Institution-CUHK-purple.svg)](https://blackboard.cuhk.edu.hk)
+
+An enterprise-ready AI Agent plugin and [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server for **The Chinese University of Hong Kong (CUHK)** Blackboard Learn LMS (`https://blackboard.cuhk.edu.hk`).
+
+Enables AI agents (Claude, Cursor, Antigravity, LangGraph, etc.) to scrape course information, lecture notes, syllabus, announcements, assignments, and grades while allowing users to input their preferred authentication method to handle CUHK's Duo 2FA and Single Sign-On (CWEM / OnePass).
+
+[中文文档 (README_CN.md)](README_CN.md)
+
+---
+
+## 🔍 CUHK Blackboard Architecture & Authentication Analysis
+
+### 1. Institutional Security & Duo 2FA
+The Chinese University of Hong Kong protects Blackboard (`blackboard.cuhk.edu.hk`) using:
+- **Central Authentication Service (SSO / OnePass)**: CWEM credentials (`studentID@link.cuhk.edu.hk`).
+- **Duo Two-Factor Authentication (2FA)**: Mandatory second factor via Duo Push or 6-digit offline passcode.
+
+Because of the Duo 2FA challenge, completely automated headless password logins are subject to MFA challenges and institutional risk controls.
+
+### 2. Blackboard Mobile App & Web Bridge
+In the official Blackboard Mobile App (iOS / Android), when a user searches for "The Chinese University of Hong Kong", the app triggers the **Force-to-Web** authentication flow:
+1. An embedded webview opens the CUHK SSO & Duo login gateway.
+2. The user approves the Duo Push on their mobile device.
+3. Blackboard issues session tokens (`JSESSIONID`, `session_id`, `X-Blackboard-SXS`) and OAuth Bearer tokens.
+4. Mobile tokens can remain valid for extended periods (configurable up to 336 hours / ~2 weeks).
+
+### 3. Solution: User-Selectable Authentication
+This plugin provides **5 flexible authentication methods** so the user can choose the most convenient and secure option for their environment:
+
+| Method | Best For | Security & Ease |
+|---|---|---|
+| **`browser_capture`** (Zero Copy) | IDE Sidebar Browser / Local | ⭐⭐⭐⭐⭐ Log in via sidebar browser; Agent auto-captures session seamlessly. |
+| **`cookie`** (Recommended) | Local & Remote Agents | ⭐⭐⭐⭐⭐ Log in once with Duo in browser, paste cookie. Fast & reliable. |
+| **`token`** | Mobile App / API Users | ⭐⭐⭐⭐ Paste Bearer token from Mobile or Developer Portal. |
+| **`credentials`** | Scripts & Passcode | ⭐⭐⭐ Username + CWEM password + Duo 6-digit passcode. |
+| **`interactive`** | Local CLI / Desktop | ⭐⭐⭐⭐ Guided CLI or automated Playwright browser login. |
+| **`saved_session`** | Persistent Agent Use | ⭐⭐⭐⭐⭐ Auto-loads from `~/.cuhk_blackboard/session.json` or env vars. |
+
+---
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+# Clone or navigate to the repository
+cd d:/blackboard_plugin
+
+# Install dependencies
+pip install -e .
+```
+
+### 1. Interactive Authentication Setup
+
+Run the interactive wizard:
+```bash
+python -m cuhk_blackboard.cli auth
+```
+
+Or configure via environment variables:
+```bash
+export CUHK_BB_COOKIE="JSESSIONID=...; session_id=...; X-Blackboard-SXS=..."
+export CUHK_BB_HOST="https://blackboard.cuhk.edu.hk"
+```
+
+### 2. Verify Session Status
+
+```bash
+python -m cuhk_blackboard.cli status
+```
+
+---
+
+## 🤖 MCP Server Setup for AI Agents
+
+To use this plugin with Claude Desktop, Cursor, Antigravity, or any MCP client, add the following to your MCP configuration file (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "cuhk-blackboard": {
+      "command": "python",
+      "args": ["-m", "cuhk_blackboard.mcp_server"],
+      "cwd": "d:/blackboard_plugin",
+      "env": {
+        "CUHK_BB_HOST": "https://blackboard.cuhk.edu.hk"
+      }
+    }
+  }
+}
+```
+
+Once loaded, the AI agent has direct access to all Blackboard tools!
+
+---
+
+## 🛠️ Agent Tools Reference
+
+| Tool Name | Parameters | Description |
+|---|---|---|
+| `cuhk_bb_configure_auth` | `method`, `value`, `username`, `password`, `duo_passcode`, `host`, `save` | Configure or switch authentication method dynamically. |
+| `cuhk_bb_auth_status` | *(none)* | Verify active session with Blackboard and return user profile. |
+| `cuhk_bb_get_auth_guide` | `method` (`cookie`, `token`, `credentials`, `all`) | Get step-by-step instructions on obtaining credentials. |
+| `cuhk_bb_list_courses` | `include_hidden` | List enrolled courses with course ID, code, name, and term. |
+| `cuhk_bb_get_course_details` | `course_id` | Retrieve detailed metadata for a course. |
+| `cuhk_bb_list_course_contents`| `course_id`, `content_id`, `recursive`, `max_depth` | Browse course folders, lecture slides, syllabus, and files. |
+| `cuhk_bb_list_announcements` | `course_id`, `limit` | Fetch course announcements with cleaned Markdown text. |
+| `cuhk_bb_list_assignments` | `course_id`, `upcoming_only` | List upcoming assignments, due dates, and point values. |
+| `cuhk_bb_get_grades` | `course_id` | Fetch gradebook scores, percentages, and instructor feedback. |
+| `cuhk_bb_download_material` | `course_id`, `content_id`, `attachment_id`, `target_dir` | Download lecture slides / attachments to local storage. |
+| `cuhk_bb_search_materials` | `query`, `course_id` | Keyword search across course titles, announcements, and files. |
+| `cuhk_bb_get_course_summary` | `course_id` | LLM-optimized summary (announcements + upcoming tasks + grades). |
+
+---
+
+## 📋 Cookie Extraction Tutorial (Step-by-Step)
+
+Because CUHK uses Duo 2FA, the **Cookie Method** is the most reliable way to grant your Agent access without compromising passwords:
+
+1. Open your browser (Chrome, Edge, Firefox, or Safari).
+2. Go to **[https://blackboard.cuhk.edu.hk](https://blackboard.cuhk.edu.hk)**.
+3. Sign in with your CUHK OnePass (CWEM) credentials and approve the **Duo Mobile** push notification.
+4. Once logged in, press **F12** (Developer Tools).
+5. Switch to the **Network** tab, press **F5** to refresh the page.
+6. Click on the first document request (e.g. `tabAction` or `portal`).
+7. In the **Headers** -> **Request Headers** section, find the `Cookie:` header.
+8. Copy the entire string (or extract `JSESSIONID` and `session_id`).
+9. Tell your Agent:
+   > *"Configure my Blackboard auth using this cookie: `JSESSIONID=...; session_id=...`"*
+   
+   Or run:
+   ```bash
+   python -m cuhk_blackboard.cli auth
+   ```
+
+---
+
+## 💻 CLI Usage
+
+```bash
+# List all courses
+python -m cuhk_blackboard.cli courses
+
+# List course materials
+python -m cuhk_blackboard.cli contents --course _12345_1 --recursive
+
+# List announcements
+python -m cuhk_blackboard.cli announcements --course _12345_1
+
+# View grades
+python -m cuhk_blackboard.cli grades --course _12345_1
+
+# Download an attachment
+python -m cuhk_blackboard.cli download --course _12345_1 --content _cnt_01 --attachment _att_01 --dir ./my_notes
+
+# Start MCP server manually
+python -m cuhk_blackboard.cli mcp
+```
+
+---
+
+## 🧪 Testing
+
+The repository includes a comprehensive unit and integration test suite:
+
+```bash
+pytest -v
+```
+
+Tests cover:
+- Authentication parsing (raw headers, cURL, JSON, dict)
+- Token and credentials configuration
+- Session file persistence & masking
+- REST API and HTML scraping fallbacks
+- Full MCP Server protocol (JSON-RPC 2.0 initialize, tools/list, tools/call)
+- Agent tools registry and schema validation
+- CLI execution and error paths
+
+---
+
+## 🔒 Security & Privacy
+
+- Credentials stored locally in `~/.cuhk_blackboard/session.json` with restricted permissions.
+- Secret masking in logs (`********` for passwords, `xxxx...yyyy` for tokens).
+- Read-only default operations for student safety.
+- Clear command to purge stored credentials: `client.auth_manager.clear_session()`.
+
+---
+
+## 📄 License
+
+MIT License. Designed for CUHK students, researchers, and teaching assistants.

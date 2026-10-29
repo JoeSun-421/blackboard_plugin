@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "cuhk-blackboard": {
+      "command": "python",
+      "args": [
+        "-m",
+        "cuhk_blackboard.mcp_server"
+      ],
+      "cwd": "d:/blackboard_plugin",
+      "env": {
+        "CUHK_BB_HOST": "https://blackboard.cuhk.edu.hk"
+      }
+    }
+  }
+}

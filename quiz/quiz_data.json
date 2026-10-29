@@ -1,0 +1,298 @@
+{
+  "title": "CUHK Blackboard Plugin Technical Architecture & Security Mastery Exam",
+  "version": "1.0.0",
+  "description": "Comprehensive technical examination evaluating architecture design, MCP stream isolation, multi-tier authentication, security controls, dual-engine fallback, and test suite reliability for cuhk-blackboard-plugin.",
+  "total_points": 100,
+  "passing_score": 70,
+  "categories": [
+    "Architecture & MCP Protocol",
+    "Authentication & CDP Harvesting",
+    "Security Controls & Data Protection",
+    "Dual-Engine Fallback & Session Validation",
+    "Core APIs & Attachment Security",
+    "Test Engineering & Mocking Strategies",
+    "Enterprise Authentication & MFA Architecture",
+    "Resilience & Scraper Engineering"
+  ],
+  "questions": [
+    {
+      "id": "mcq_1",
+      "type": "mcq",
+      "category": "Architecture & MCP Protocol",
+      "points": 10,
+      "question": "In cuhk_blackboard/mcp_server.py, the run_stdio() method configures real_stdout = sys.stdout followed immediately by sys.stdout = sys.stderr. Which of the following statements most accurately explains the technical necessity of this design within the Model Context Protocol (MCP Protocol Version 2024-11-05) stdio transport?",
+      "options": {
+        "A": "sys.stdout = sys.stderr suppresses Windows OS console pop-up windows and enforces thread safety when multiple agents ping the server simultaneously.",
+        "B": "In stdio MCP transport, stdout is the dedicated framing transport for JSON-RPC 2.0 messages; reassigning sys.stdout to sys.stderr prevents third-party library logging or stray print() calls from corrupting JSON framing while routing logs safely to the host agent's debug channel, leaving real_stdout as the sole legitimate protocol transport.",
+        "C": "Python 3.14 deprecates sys.stdout.write() for string buffers, so redirecting to sys.stderr is required by the MCP specification to convert ASCII strings into UTF-8 before sending them to the host agent.",
+        "D": "The MCP specification mandates that all tool execution outputs must be printed to stderr with an isError: False flag, while stdout is reserved strictly for protocol handshake notifications."
+      },
+      "answer": "B",
+      "explanation": "In stdio-based MCP servers (targeting protocol version 2024-11-05), stdout is the dedicated physical wire for JSON-RPC 2.0 protocol frames. Any extraneous output from third-party libraries (e.g. requests, urllib3, bs4) or rogue print() calls corrupts the JSON stream framing on the host parser (such as Claude Desktop or Cursor), immediately terminating the RPC session. In cuhk_blackboard/mcp_server.py (lines 163-181), the server reassigns sys.stdout = sys.stderr so that all standard output is safely redirected to the stderr stream (which MCP clients capture as debug logging). The server retains a private reference real_stdout = sys.stdout, exclusively writing serialized JSON-RPC response envelopes followed by a newline and flush.",
+      "code_references": [
+        {
+          "file": "cuhk_blackboard/mcp_server.py",
+          "lines": "17-19, 149-193",
+          "description": "MCP Protocol 2024-11-05 constant definitions, stdio stream isolation reassigning sys.stdout = sys.stderr, and private real_stdout write/flush loop."
+        }
+      ],
+      "rubric": {
+        "full_credit": "Selects option B (10 points).",
+        "zero_credit": "Selects any option other than B (0 points)."
+      }
+    },
+    {
+      "id": "mcq_2",
+      "type": "mcq",
+      "category": "Authentication & CDP Harvesting",
+      "points": 10,
+      "question": "In cuhk_blackboard/interactive_login.py, what is the exact fallback sequence of ports probed for Chrome DevTools Protocol (CDP) session harvesting, the prioritized channel order for launching Chromium browsers via Playwright, and the target URL regex pattern used to detect successful authentication?",
+      "options": {
+        "A": "Probes CDP ports (8080, 8000, 3000); launches 'chrome' -> 'msedge' -> 'firefox'; waits for URL regex r'blackboard\\.cuhk\\.edu\\.hk/webapps/login'.",
+        "B": "Probes CDP ports (9222, 9229, 9333); launches 'msedge' -> 'chrome' -> unbundled 'chromium'; waits for URL regex r'blackboard\\.cuhk\\.edu\\.hk/(?:ultra|webapps/(?:portal|blackboard))'.",
+        "C": "Probes CDP ports (9000, 9100, 9200); launches unbundled 'chromium' only; waits for URL regex r'sts\\.cuhk\\.edu\\.hk/adfs/ls/'.",
+        "D": "Probes CDP ports (9222, 9229, 9333); launches 'safari' -> 'msedge' -> 'chrome'; waits for URL regex r'blackboard\\.cuhk\\.edu\\.hk/api/v1/auth'."
+      },
+      "answer": "B",
+      "explanation": "In cuhk_blackboard/interactive_login.py, launch_browser_login() implements a multi-stage harvesting pipeline: (1) Probes local CDP debugging endpoints across ports (9222, 9229, 9333) via capture_from_cdp() (line 179) to inspect existing browser tabs without launching a new process; (2) If no active CDP session is found, launches Playwright Chromium with channel order ('msedge', 'chrome', None) where None represents unbundled chromium (lines 187-196); (3) Navigates to the host and waits for the authenticated target URL pattern compiled with regex r'blackboard\\.cuhk\\.edu\\.hk/(?:ultra|webapps/(?:portal|blackboard))' (line 206), subsequently verifying the presence of 'session_id' or 'JSESSIONID' cookies.",
+      "code_references": [
+        {
+          "file": "cuhk_blackboard/interactive_login.py",
+          "lines": "139-162, 178-235",
+          "description": "capture_from_cdp() port probing and launch_browser_login() browser fallback order ('msedge' -> 'chrome' -> chromium) and URL regex matching."
+        }
+      ],
+      "rubric": {
+        "full_credit": "Selects option B (10 points).",
+        "zero_credit": "Selects any option other than B (0 points)."
+      }
+    },
+    {
+      "id": "mcq_3",
+      "type": "mcq",
+      "category": "Security Controls & Data Protection",
+      "points": 10,
+      "question": "To protect student credentials, cuhk-blackboard-plugin enforces strict boundaries regarding plaintext secrets at rest and in runtime representations. Which of the following describes the exact behavior implemented in cuhk_blackboard/auth.py:save_session() and cuhk_blackboard/models.py:AuthConfig.to_dict()?",
+      "options": {
+        "A": "save_session() encrypts the password with AES-256 before writing to session.json, and to_dict(mask_secrets=True) leaves the password in plaintext for logging.",
+        "B": "save_session() saves all fields including password and duo_passcode in base64 format, while to_dict() drops the username.",
+        "C": "save_session() explicitly excludes 'password' and 'duo_passcode' from the serialized disk payload (keeping them volatile in-memory only), while to_dict(mask_secrets=True) masks 'password' to '********', truncates 'bearer_token' to the first 8 and last 4 characters, and truncates cookies longer than 8 chars to the first 4 and last 4 characters.",
+        "D": "save_session() stores passwords in the OS system keychain (keyring), while to_dict() strips all cookies completely."
+      },
+      "answer": "C",
+      "explanation": "Security hardening in cuhk_blackboard/auth.py (lines 224-240) ensures that save_session() writes a dictionary containing only 'method', 'host', 'cookies', 'bearer_token', 'username', and 'session_file'. The student's CWEM password and Duo passcode are strictly excluded from disk persistence, residing only in volatile memory during the active Python process. Complementing this, cuhk_blackboard/models.py (lines 51-75) implements AuthConfig.to_dict(mask_secrets=True), which replaces password with '********', masks bearer_token to f'{token[:8]}...{token[-4:]}', and masks cookies longer than 8 chars to f'{val[:4]}...{val[-4:]}', preventing credential leakage in AI agent context windows or debug logs.",
+      "code_references": [
+        {
+          "file": "cuhk_blackboard/auth.py",
+          "lines": "224-240",
+          "description": "save_session() payload construction strictly excluding password and duo_passcode."
+        },
+        {
+          "file": "cuhk_blackboard/models.py",
+          "lines": "51-75",
+          "description": "AuthConfig.to_dict(mask_secrets=True) secret masking rules for password, bearer_token, and cookies."
+        }
+      ],
+      "rubric": {
+        "full_credit": "Selects option C (10 points).",
+        "zero_credit": "Selects any option other than C (0 points)."
+      }
+    },
+    {
+      "id": "mcq_4",
+      "type": "mcq",
+      "category": "Dual-Engine Fallback & Session Validation",
+      "points": 10,
+      "question": "In cuhk_blackboard/client.py:verify_auth(), when the REST endpoint (/learn/api/public/v1/users/me) returns HTTP 401 or 403, the client falls back to querying the web portal tab action URL (/webapps/portal/execute/tabs/tabAction?tab_tab_group_id=_1_1). Why is checking portal_resp.status_code == 200 alone insufficient, and what compound condition does client.py assert?",
+      "options": {
+        "A": "HTTP 200 on Blackboard always means the session is valid, but the client checks for content length > 1MB to ensure courses are loaded.",
+        "B": "Blackboard portal servers return HTTP 200 OK even for unauthenticated requests by returning an HTML page with SAML redirect <meta http-equiv=\"REFRESH\" content=\"0;url=.../auth-saml/...\"> or an ADFS login form; thus client.py asserts status_code == 200, has_logout is True (contains 'action=logout' or extracted student name), and is_login_page is False (rejecting 'webapps/login', 'auth-saml', 'sts.cuhk.edu.hk', 'loginform', and 'refresh' meta tags).",
+        "C": "CUHK Blackboard uses HTTP 200 for error responses and HTTP 302 for valid sessions, so the client checks portal_resp.history to confirm a redirect occurred.",
+        "D": "Web portal requests fail with HTTP 500 when cookies are missing, so checking status code 200 is sufficient; the extra checks are purely for collecting analytics."
+      },
+      "answer": "B",
+      "explanation": "Blackboard Learn's legacy web portal infrastructure notoriously serves HTTP 200 OK responses to unauthenticated clients, embedding client-side HTML redirects such as <meta http-equiv=\"REFRESH\" content=\"0;url=.../auth-saml/...\"> or rendering the CUHK OnePass / ADFS federation form. Relying solely on status_code == 200 results in catastrophic false-positive authentication validation. In cuhk_blackboard/client.py (lines 106-128), verify_auth() executes defensive compound validation: it confirms status_code == 200, validates has_logout ('action=logout' in portal text or parsed user display name), AND ensures is_login_page is False (rejecting occurrences of 'webapps/login', 'auth-saml', 'sts.cuhk.edu.hk', 'loginform', and 'refresh\" content=\"0;url=').",
+      "code_references": [
+        {
+          "file": "cuhk_blackboard/client.py",
+          "lines": "103-128",
+          "description": "verify_auth() portal fallback, is_login_page detection, has_logout validation, and false-positive SAML redirect rejection."
+        }
+      ],
+      "rubric": {
+        "full_credit": "Selects option B (10 points).",
+        "zero_credit": "Selects any option other than B (0 points)."
+      }
+    },
+    {
+      "id": "mcq_5",
+      "type": "mcq",
+      "category": "Core APIs & Attachment Security",
+      "points": 10,
+      "question": "In cuhk_blackboard/client.py:download_material(), how does the client retrieve and sanitize attachment filenames from the server's Content-Disposition header, and how does it prevent memory exhaustion when downloading large course materials?",
+      "options": {
+        "A": "It reads the entire file into memory using resp.content and saves it using os.path.basename() with no regex filtering.",
+        "B": "It uses stream=True on the HTTP request and writes chunks of 8192 bytes, extracts the filename via regex r'filename\\*?=(?:UTF-8\\'\\')?[\"\\']?([^\"\\';\\r\\n]+)', and sanitizes it using re.sub(r'[\\\\/*?:\"<>|]', \"_\", filename) to prevent directory traversal and filesystem invalid character errors.",
+        "C": "It hashes the file content with SHA-256 and names the file after the hex digest, discarding the original server filename.",
+        "D": "It opens a subprocess executing curl or wget directly with --remote-name to delegate path sanitization to the operating system shell."
+      },
+      "answer": "B",
+      "explanation": "In cuhk_blackboard/client.py (lines 431-473), download_material() ensures both memory safety and filesystem security: (1) It issues the request with stream=True and iterates over chunks with for chunk in resp.iter_content(chunk_size=8192), preventing out-of-memory crashes on large video recordings or slide decks; (2) When filename is not provided by the caller, it extracts it from the Content-Disposition response header using regex match = re.search(r'filename\\*?=(?:UTF-8\\'\\')?[\"\\']?([^\"\\';\\r\\n]+)', cd, re.IGNORECASE); (3) It sanitizes the extracted filename using safe_filename = re.sub(r'[\\\\/*?:\"<>|]', '_', filename) before combining with target_dir, neutralizing directory traversal characters (e.g. '../', '..\\\\') and forbidden Windows/POSIX filename characters.",
+      "code_references": [
+        {
+          "file": "cuhk_blackboard/client.py",
+          "lines": "431-473",
+          "description": "download_material() chunked streaming (8192 bytes), Content-Disposition regex parsing, and regex path traversal sanitization."
+        }
+      ],
+      "rubric": {
+        "full_credit": "Selects option B (10 points).",
+        "zero_credit": "Selects any option other than B (0 points)."
+      }
+    },
+    {
+      "id": "mcq_6",
+      "type": "mcq",
+      "category": "Test Engineering & Mocking Strategies",
+      "points": 10,
+      "question": "The cuhk-blackboard-plugin test suite consists of 57 pytest unit tests executing in under 0.25 seconds. How does the test suite achieve 100% offline determinism and complete isolation from both live CUHK servers and the local developer environment?",
+      "options": {
+        "A": "Tests hit a live staging server (staging.blackboard.cuhk.edu.hk) using a hardcoded student test account.",
+        "B": "Tests mock the network pipeline via unittest.mock.patch.object on client.session.request using side_effect chains for fallback verification, isolate session persistence using pytest's tmp_path fixture for ephemeral config paths, and mock Playwright/CDP browser probes.",
+        "C": "Tests spin up a local Docker container running an emulated Blackboard Learn instance on port 8080.",
+        "D": "Tests record and replay live HTTP traffic using vcrpy, writing cassette files into the .agents/teamwork/ directory."
+      },
+      "answer": "B",
+      "explanation": "The test suite in tests/ (57 tests across test_auth.py, test_cli.py, test_client.py, test_mcp_server.py, test_models.py, test_tools.py) achieves complete hermetic offline determinism: (1) All HTTP requests are intercepted via patch.object(client.session, 'request', return_value=mock_resp), with multi-tier fallbacks verified via side_effect=[fail_resp, ok_resp]; (2) Session persistence tests isolate filesystem writes using pytest's tmp_path fixture, preventing pollution of ~/.cuhk_blackboard/session.json; (3) Browser automation and CDP probing are mocked in test_tools.py via patch('cuhk_blackboard.interactive_login.capture_from_cdp'), allowing the full test suite to pass in headless CI environments without live network reliance.",
+      "code_references": [
+        {
+          "file": "tests/test_client.py",
+          "lines": "15-30, 85-95",
+          "description": "MockResponse fixtures and patch.object(client.session, 'request') side_effect fallback testing."
+        },
+        {
+          "file": "tests/test_auth.py",
+          "lines": "72-105",
+          "description": "tmp_path filesystem isolation for session file loading and clearing."
+        },
+        {
+          "file": "tests/test_tools.py",
+          "lines": "118-132",
+          "description": "Mocking capture_from_cdp in interactive browser session testing."
+        }
+      ],
+      "rubric": {
+        "full_credit": "Selects option B (10 points).",
+        "zero_credit": "Selects any option other than B (0 points)."
+      }
+    },
+    {
+      "id": "analysis_1",
+      "type": "analysis",
+      "category": "Enterprise Authentication & MFA Architecture",
+      "points": 20,
+      "question": "CUHK Blackboard Learn (blackboard.cuhk.edu.hk) enforces institutional Single Sign-On (OnePass CWEM) routed through Microsoft Active Directory Federation Services (ADFS / SAML at sts.cuhk.edu.hk) and Duo Mobile Two-Factor Authentication (Push approval or TOTP passcode).\n\n1. Analyze the technical mechanics of why unassisted headless username/password submission (e.g. basic HTTP POST requests) fundamentally fails against this architecture.\n2. Conduct a comparative architectural analysis of the 5 authentication routes implemented in cuhk-blackboard-plugin (CDP zero-copy browser harvesting, multi-format cookie ingestion, mobile OAuth Bearer tokens, CWEM credentials, and session persistence), highlighting their operational trade-offs, security profiles, and session lifespans.\n3. Detail the specific Anti-CSRF synchronization mechanisms (X-Blackboard-SXS), origin/referer header bindings, and cookie jar handling implemented in cuhk_blackboard/auth.py and cuhk_blackboard/client.py to prevent session rejection.\n4. Explain how the plugin enforces security boundaries between in-memory credentials and local disk storage (save_session vs to_dict), and how it mitigates accidental credential exposure in multi-agent LLM logs.",
+      "answer": "Comprehensive Technical Model Answer:\n\n1. Root Cause of Headless Login Failure with Institutional SSO & MFA:\nCUHK Blackboard does not maintain local username/password databases for students. Attempting to POST credentials directly to /webapps/login/ triggers a SAML 2.0 AuthnRequest redirect to CUHK OnePass ADFS at https://sts.cuhk.edu.hk/adfs/ls/. Upon submitting valid CWEM credentials, ADFS does not immediately issue SAML assertion tokens; instead, it renders an embedded Duo Security frame that initiates an asynchronous, cryptographic out-of-band challenge (Duo Push notification to the user's mobile device or TOTP verification). A standard headless HTTP client cannot satisfy this secondary challenge because it requires human cryptographic interaction on a registered mobile device and subsequent SAML assertion POST back to Blackboard's Assertion Consumer Service (/auth-saml/saml/SSO). Consequently, headless automation halts at the ADFS/Duo boundary.\n\n2. 5-Route Authentication Comparative Analysis:\n- Route 1: CDP Zero-Copy Browser Harvesting (cuhk_bb_capture_browser_session): Connects via Chrome DevTools Protocol to local browser ports (9222, 9229, 9333). Extracts authenticated cookies with zero manual clipboard copying. High user convenience for IDE sidebar browsers; requires browser with remote debugging enabled; session lifetime ~1-2 hours.\n- Route 2: Multi-Format Cookie Ingestion (set_cookie_auth & parse_cookie_input): Ingests cookies copied from browser DevTools, supporting 6 formats (raw HTTP header, cURL -H / -b, tab-separated DevTools table, newline-delimited pairs, JSON dict, Cookie-Editor JSON array). Highly resilient to formatting artifacts; requires manual student extraction; session lifetime ~1-2 hours.\n- Route 3: Mobile OAuth Bearer Token (set_token_auth): Ingests OAuth 2.0 JWT Bearer tokens extracted from the official CUHK Blackboard Mobile App. Bypasses SAML web flows entirely and provides extended TTL (up to 336 hours / 14 days); requires initial token extraction via mobile MITM proxy or token cache.\n- Route 4: Interactive CWEM Credentials Flow (set_credentials_auth): Collects username, password, and optional offline Duo TOTP passcode. Kept volatile in-memory only. If Duo push is enforced, gracefully fails and provides an actionable guidance note steering the student to cookie or CDP auth.\n- Route 5: Priority Session Persistence (load_session): Enforces a strict 3-tier loading hierarchy: Environment variables (CUHK_BB_COOKIE, CUHK_BB_TOKEN, CUHK_BB_HOST) > Local session file (~/.cuhk_blackboard/session.json) > Unauthenticated state. Avoids repetitive authentication across agent restarts.\n\n3. Anti-CSRF Token Synchronization & Header Hardening:\n- In auth.py:get_auth_headers(), the client extracts the 'X-Blackboard-SXS' cookie value and synchronizes it as an explicit HTTP request header ('X-Blackboard-SXS': sxs_token), satisfying Blackboard's Synchronizer Token Pattern on REST mutations and state queries.\n- Origin and Referer headers are dynamically pinned to the configured host URL (https://blackboard.cuhk.edu.hk) to pass cross-origin referer checks.\n- In client.py:_request(), the client clears session.cookies on every dispatch and re-populates directly from auth_manager.config.cookies, stripping any manual 'Cookie' header from the request dictionary to prevent duplicate header conflicts between requests.Session's cookie jar and custom headers.\n\n4. Security Boundaries & Secret Masking:\n- Zero Plaintext Password on Disk: In auth.py:save_session(), the disk dictionary strictly excludes 'password' and 'duo_passcode'. Only method, host, cookies, bearer_token, and username are written to session.json. Even if save=True is selected, passwords exist exclusively in volatile process memory.\n- LLM Context Sanitization: In models.py:AuthConfig.to_dict(mask_secrets=True), passwords are substituted with '********', bearer tokens are truncated to first 8 and last 4 characters, and cookies longer than 8 characters are truncated to first 4 and last 4 characters. When agent tools (e.g. auth_status, configure_auth) return config states, secrets are masked, preventing sensitive institutional tokens from leaking into agent prompt logs or remote LLM provider context caches.",
+      "code_references": [
+        {
+          "file": "cuhk_blackboard/auth.py",
+          "lines": "85-132, 224-275",
+          "description": "AuthManager multi-tier auth routes, get_auth_headers() with X-Blackboard-SXS anti-CSRF binding, and save_session() password exclusion."
+        },
+        {
+          "file": "cuhk_blackboard/interactive_login.py",
+          "lines": "139-235",
+          "description": "capture_from_cdp() and launch_browser_login() CDP zero-copy harvesting implementation."
+        },
+        {
+          "file": "cuhk_blackboard/models.py",
+          "lines": "51-75",
+          "description": "AuthConfig.to_dict(mask_secrets=True) multi-tier credential sanitization."
+        },
+        {
+          "file": "cuhk_blackboard/client.py",
+          "lines": "65-90",
+          "description": "_request() cookie jar synchronization, header cleanup, and 15s timeout enforcement."
+        }
+      ],
+      "rubric": {
+        "total_points": 20,
+        "criteria": [
+          {
+            "id": "c1",
+            "criterion": "Root Cause Analysis of Headless Login Failure",
+            "points": 5,
+            "description": "Correctly articulates SAML 2.0 ADFS federation at sts.cuhk.edu.hk, out-of-band Duo Mobile MFA challenge, and explains why standard headless HTTP POST cannot negotiate the secondary cryptographic challenge."
+          },
+          {
+            "id": "c2",
+            "criterion": "5-Route Authentication Trade-Off Analysis",
+            "points": 5,
+            "description": "Compares CDP zero-copy harvesting (convenience, sidebar integration), multi-format cookie parser (flexible ingestion, 1-hr TTL), mobile token (14-day extended TTL), credentials (in-memory, Duo notice), and priority persistence hierarchy."
+          },
+          {
+            "id": "c3",
+            "criterion": "Session Synchronization & CSRF Protection",
+            "points": 5,
+            "description": "Details the extraction and injection of X-Blackboard-SXS anti-CSRF token, Origin/Referer header pinning, and requests.Session cookie jar re-synchronization."
+          },
+          {
+            "id": "c4",
+            "criterion": "Security Boundaries & Secret Masking",
+            "points": 5,
+            "description": "Explains how save_session() strictly omits password and duo_passcode from disk, and how AuthConfig.to_dict(mask_secrets=True) truncates tokens/cookies and masks passwords to protect LLM context windows."
+          }
+        ]
+      }
+    },
+    {
+      "id": "analysis_2",
+      "type": "analysis",
+      "category": "Resilience & Scraper Engineering",
+      "points": 20,
+      "question": "Modern enterprise LMS instances frequently present a hybrid operational state between legacy Web Portal views (Blackboard 9.1 Original) and modern single-page applications (Blackboard Ultra), compounded by restrictive endpoint permissions and non-standard HTTP response patterns.\n\n1. Contrast the architectural characteristics and endpoint access paradigms of Blackboard Learn REST API v1 (/learn/api/public/v1/...) versus legacy Web Portal servlets (/webapps/...), specifically addressing course view variations (Original vs Ultra).\n2. Detail the execution flow of the Dual-Engine Fallback Pipeline across key domain operations (auth verification, course listing, content hierarchy, announcements, grades, and attachment downloads), identifying the exact HTTP failure status codes and condition triggers that initiate fallback.\n3. Explain how the client traps false-positive HTTP 200 OK responses containing SAML ADFS <meta http-equiv=\"REFRESH\"> redirects or login forms, detailing the boolean assertion logic employed.\n4. Describe the defense-in-depth measures implemented in the data normalization and download layer, including BeautifulSoup AST transformation for Markdown link preservation, grade percentage calculation with division-by-zero guards, and path traversal sanitization.",
+      "answer": "Comprehensive Technical Model Answer:\n\n1. Architectural Duality: REST API v1 vs Legacy Web Portal Servlets (Original vs Ultra):\n- Blackboard Learn instances combine two distinct historical architectures: (a) Legacy Java Servlets (/webapps/portal/..., /webapps/blackboard/...) producing server-side rendered JSP/HTML tables, and (b) Modern REST APIs (/learn/api/public/v1/...) returning JSON payloads.\n- In Original Course Views, courses are structured around content areas accessed via /webapps/blackboard/content/listContentEditable.jsp. In Ultra Course Views, courses utilize modern client-side Angular/React SPAs under /ultra/courses/{id}, where course items are represented as hierarchical JSON trees.\n- Institutional permissions frequently create API heterogeneity: students may lack API discovery rights on /users/me/courses (yielding 403 Forbidden or empty results) while retaining access to the Web Portal dashboard tabs (/webapps/portal/execute/tabs/tabAction). The plugin bridges this gap by detecting Ultra status via ultraStatus == 'Ultra' or URL matching r'/(?:ultra|courses)/(_\\d+_\\d+)' and normalizing both representations into unified Course dataclass entities.\n\n2. Dual-Engine Fallback Pipeline Execution Flow:\n- Auth Verification: Tries GET /learn/api/public/v1/users/me. On 401/403, falls back to Web Portal tabAction URL /webapps/portal/execute/tabs/tabAction?tab_tab_group_id=_1_1, scraping the user display name from #global-nav-link.\n- Course Listing: Tries /users/me/courses. On 401/403/404 or empty list, tries system /courses. If still empty, scrapes portal tabAction HTML using regex r'(?:(?:course_id|id)=|/courses/)(_\\d+_\\d+)' and parses course codes.\n- Course Contents: Calls REST /courses/{id}/contents/{cid}/children. On 401/403/404, falls back to /webapps/blackboard/content/listContentEditable.jsp, parsing .contentList, .contentListPlain, and .content-item HTML elements.\n- Announcements: Calls REST /courses/{id}/announcements. On failure, falls back to /webapps/blackboard/execute/announcement?course_id={id}, extracting titles and body text with BeautifulSoup.\n- Grades: Calls REST /gradebook/columns and /users/me attempt endpoints. On 401/403 (common when column permissions are restricted to instructors), falls back to /webapps/gradebook/do/student/viewGrades?course_id={id}, parsing .graded_item_row elements.\n- Downloads: Routes REST attachment IDs to /learn/api/public/v1/.../download, while intercepting direct absolute URLs (http://, https://) or relative paths (/bbcswebdav/...) to stream directly from Blackboard's WebDAV content store.\n\n3. False-Positive HTTP 200 OK Detection & SAML Trap:\nWhen an unauthenticated request hits /webapps/portal/..., Blackboard responds with HTTP status 200 OK while returning an HTML document containing <meta http-equiv=\"REFRESH\" content=\"0;url=.../auth-saml/...\"> or an ADFS login form. In client.py:verify_auth(), the plugin uses compound boolean logic:\n- is_login_page = ('webapps/login' in url or 'auth-saml' in text or 'sts.cuhk.edu.hk' in url or 'loginform' in text or 'refresh\" content=\"0;url=' in text)\n- has_logout = ('action=logout' in text or '/webapps/login?action=logout' in text or bool(_parse_user_name_from_portal(text)))\n- Condition for valid session: (portal_resp.status_code == 200 and has_logout and not is_login_page). If any login marker is present or the logout link is absent, the session is definitively rejected as unauthenticated.\n\n4. Data Normalization & Defense-in-Depth Measures:\n- Markdown Link Preservation: In models.py:Announcement.from_api(), BeautifulSoup parses raw HTML. Instead of naively stripping <a> tags (which would discard critical lecture/Zoom/Form links), the parser converts anchor tags to Markdown format: a_tag.replace_with(f'[{text_inside}]({href})'), then appends newlines to block tags (<p>, <br>, <div>, <li>) and collapses excess whitespace, producing clean text for LLM consumption.\n- Type-Safe Gradebook Calculation: In models.py:GradeItem.from_api(), score values and points possible are parsed with try-except (ValueError, TypeError) blocks. It guards against ZeroDivisionError: pct = round((score / pts_possible) * 100, 2) only if pts_possible and pts_possible > 0.\n- Attachment Path Traversal Sanitization: In client.py:download_material(), filenames from Content-Disposition headers are sanitized via safe_filename = re.sub(r'[\\\\/*?:\"<>|]', '_', filename). This neutralizes path traversal tokens (../, ..\\\\) and characters forbidden across Windows and POSIX filesystems, writing via chunked 8192-byte streams to prevent out-of-memory crashes.",
+      "code_references": [
+        {
+          "file": "cuhk_blackboard/client.py",
+          "lines": "94-130, 132-205, 212-282, 350-410, 431-473",
+          "description": "Dual-engine REST/HTML fallback implementations for auth, courses, contents, grades, and chunked downloads."
+        },
+        {
+          "file": "cuhk_blackboard/models.py",
+          "lines": "257-285, 303-349",
+          "description": "BeautifulSoup HTML-to-Markdown anchor AST transformation in Announcement, and safe percentage computation in GradeItem."
+        }
+      ],
+      "rubric": {
+        "total_points": 20,
+        "criteria": [
+          {
+            "id": "c1",
+            "criterion": "Blackboard Original vs Ultra Architecture & API Heterogeneity",
+            "points": 5,
+            "description": "Contrasts legacy JSP Web Portal servlets with REST API v1, explains student permission barriers, and addresses Ultra detection and normalization."
+          },
+          {
+            "id": "c2",
+            "criterion": "Dual-Engine Fallback Pipeline Execution Flow",
+            "points": 5,
+            "description": "Details exact fallback sequence and HTTP failure triggers (401, 403, 404, empty payloads) across auth verification, course listing, contents, announcements, grades, and WebDAV downloads."
+          },
+          {
+            "id": "c3",
+            "criterion": "False-Positive HTTP 200 OK Detection & SAML Trap",
+            "points": 5,
+            "description": "Explains why unauthenticated portal requests return HTTP 200 with SAML/ADFS redirects, and details the compound assertion logic (status_code == 200 and has_logout and not is_login_page)."
+          },
+          {
+            "id": "c4",
+            "criterion": "Data Hygiene, Link Preservation AST & Path Traversal Sanitization",
+            "points": 5,
+            "description": "Explains BeautifulSoup AST transformation preserving Markdown links, type-safe grade percentage computation, chunked streaming, and regex path traversal sanitization."
+          }
+        ]
+      }
+    }
+  ]
+}
